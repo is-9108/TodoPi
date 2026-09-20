@@ -13,6 +13,11 @@
 | `/subagent-config` | `/req`・`/tdd` のサブエージェントモデルを設定・確認 |
 | `/fix` | レビュー指摘に基づく修正フロー。start / approve / test / review / status / reset |
 
+> **root の `package.json` について**
+>
+> ワークフロー（`/tdd`・`/fix`）はテストコマンドを自動検出し、既定では `npm test` を実行します。
+> root の `package.json` はその `npm test` を `dotnet test` に中継するアダプタとして必須のため削除しないでください（`.NET` アプリ本体のテストは `tests/` の xUnit プロジェクトが担います）。
+
 ## クイックスタート
 
 ```bash
