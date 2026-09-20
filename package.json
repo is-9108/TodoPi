@@ -1,0 +1,7 @@
+{
+  "name": "todopi",
+  "private": true,
+  "scripts": {
+    "test": "dotnet test tests/TodoApi.Tests/TodoApi.Tests.csproj"
+  }
+}
