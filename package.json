@@ -2,6 +2,6 @@
   "name": "todopi",
   "private": true,
   "scripts": {
-    "test": "dotnet test tests/TodoApi.Tests/TodoApi.Tests.csproj"
+    "test": "dotnet test tests/TodoApi.Tests/TodoApi.Tests.csproj && npm test --prefix src/todopi-web"
   }
 }
