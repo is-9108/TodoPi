@@ -16,6 +16,8 @@
 ## 規約
 
 - **編集ゲート**: `/tdd` は承認後の実装フェーズ（red/green/refactor/testing/review/escalated）でのみ `write`/`edit` を制限する。idle 中は通常の作業・`/req` とも独立して編集可能。
+  - RED フェーズでは、テストファイルに加えて**テスト実行基盤ファイル**（`package.json` / `vitest.config.*` / `vite.config.*` / `jest.config.*` / `tsconfig.json` / `.gitignore` / `src/test` 配下や `setup.*` のセットアップ）のみ編集可。
+- **テストコマンド自動検出（モノレポ対応）**: `/tdd` はリポジトリルート + サブディレクトリ（深さ3まで）の `package.json` の `test` スクリプトを探索し、`npm test && npm test --prefix <dir>` のように直列実行するコマンドを組み立てる。手動で上書きしたい場合は `.pi/tdd-config.json` に `{ "testCommand": "..." }` を指定（最優先）。
 - **ディスカッション設定**: `.pi/discussion-config.json`。未設定なら `/discussion-config` を案内する。
 - **ディスカッション出力**: `./discussion/<議題>/round1|round2/<モデル名>.md` と `merged.md`。モデルはこのファイルを参照せず、共有はインメモリ（プロンプト内）で行う。
 - **修正フロー**: `/fix` は `/tdd review` やテスト失敗後の修正を独立して扱う。指摘を読み込み → 修正プラン作成 → ユーザー承認 → 修正実行 → テスト → 多角的レビュー。
