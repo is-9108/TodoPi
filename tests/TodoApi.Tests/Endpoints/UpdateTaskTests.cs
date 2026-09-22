@@ -99,6 +99,25 @@ public class UpdateTaskTests
     }
 
     [Fact]
+    public async Task UpdateTask_UpdatesTagFilterResults()
+    {
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        var id = await CreateTaskAsync(client, new { title = "Task", tags = "old" });
+        var response = await client.PutAsJsonAsync($"/api/tasks/{id}", new { title = "Task", tags = "new" });
+        response.EnsureSuccessStatusCode();
+
+        var oldResults = await client.GetAsync("/api/tasks?tag=old");
+        var newResults = await client.GetAsync("/api/tasks?tag=new");
+        using var oldDoc = JsonDocument.Parse(await oldResults.Content.ReadAsStringAsync());
+        using var newDoc = JsonDocument.Parse(await newResults.Content.ReadAsStringAsync());
+
+        Assert.Equal(0, oldDoc.RootElement.GetArrayLength());
+        Assert.Equal(1, newDoc.RootElement.GetArrayLength());
+    }
+
+    [Fact]
     public async Task UpdateTask_ChangesPriorityAndStatus()
     {
         using var factory = new CustomWebApplicationFactory();

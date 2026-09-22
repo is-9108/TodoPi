@@ -36,6 +36,35 @@ describe('fetchTasks', () => {
     expect(result).toEqual(tasks);
   });
 
+  it('includes includeCompleted when enabled', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] });
+    vi.stubGlobal('fetch', fetchMock);
+    await fetchTasks({ includeCompleted: true });
+    expect(fetchMock.mock.calls[0][0]).toContain('includeCompleted=true');
+  });
+
+  it('passes an AbortSignal to fetch when provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] });
+    vi.stubGlobal('fetch', fetchMock);
+    const signal = new AbortController().signal;
+
+    await fetchTasks(undefined, signal);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/tasks', { signal });
+  });
+
+  it('serializes includeCompleted, sortBy, and tag parameters together', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchTasks({ includeCompleted: true, sortBy: 'dueDate', tag: '__none__' });
+
+    const url = new URL(fetchMock.mock.calls[0][0], 'http://localhost');
+    expect(url.searchParams.get('includeCompleted')).toBe('true');
+    expect(url.searchParams.get('sortBy')).toBe('dueDate');
+    expect(url.searchParams.get('tag')).toBe('__none__');
+  });
+
   it('throws a TaskApiError on HTTP error', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
