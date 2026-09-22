@@ -10,6 +10,7 @@ namespace TodoApi.Controllers;
 [Route("api/tasks")]
 public class TasksController : ControllerBase
 {
+    private const int TagSearchCandidateLimit = 500;
     private readonly TodoDbContext _db;
 
     public TasksController(TodoDbContext db)
@@ -37,13 +38,53 @@ public class TasksController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<TaskResponse>>> GetTasks()
+    public async Task<ActionResult<IEnumerable<TaskResponse>>> GetTasks(
+        bool includeCompleted = false,
+        string sortBy = "priority",
+        string? tag = null)
     {
-        // フルエンティティの実体化を避け、レスポンスに必要な列のみを DB クエリで投影する。
-        // enum の ToString() は SQLite に翻訳できないため、enum 値のまま投影してメモリ上で変換する。
-        var tasks = await _db.Tasks
-            .AsNoTracking()
-            .OrderBy(t => t.Id)
+        if (sortBy is not ("priority" or "dueDate"))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Status = StatusCodes.Status400BadRequest,
+                Title = "sortBy must be either 'priority' or 'dueDate'."
+            });
+        }
+
+        var query = _db.Tasks.AsNoTracking();
+
+        if (!includeCompleted)
+        {
+            query = query.Where(t => t.Status != TaskItemStatus.Completed);
+        }
+
+        var isUntaggedSearch = string.Equals(
+            tag?.Trim(), "__none__", StringComparison.OrdinalIgnoreCase);
+        if (isUntaggedSearch)
+        {
+            query = query.Where(t => string.IsNullOrWhiteSpace(t.Tags));
+        }
+
+        // SQLite ではカンマ区切り文字列のタグ境界判定を DB に正確に翻訳できない。
+        // 完了状態・ソートは DB 側で適用し、通常タグ検索だけ候補上限を設けてから
+        // メモリ上で完全一致判定する。将来は正規化検索列/テーブルへ移行する。
+        var ordered = sortBy == "dueDate"
+            ? query
+                .OrderBy(t => t.DueDate == null)
+                .ThenBy(t => t.DueDate)
+                .ThenBy(t => t.Priority)
+            : query
+                .OrderBy(t => t.Priority)
+                .ThenBy(t => t.DueDate == null)
+                .ThenBy(t => t.DueDate);
+
+        var isTagSearch = !string.IsNullOrWhiteSpace(tag) && !isUntaggedSearch;
+        var candidates = isTagSearch
+            ? ordered.Take(TagSearchCandidateLimit)
+            : ordered;
+
+        var tasks = await candidates
             .Select(t => new
             {
                 t.Id,
@@ -58,7 +99,18 @@ public class TasksController : ControllerBase
             })
             .ToListAsync();
 
-        return Ok(tasks.Select(t => new TaskResponse
+        if (isTagSearch && tasks.Count == TagSearchCandidateLimit)
+        {
+            Response.Headers["X-Tag-Search-Truncated"] = "true";
+        }
+
+        var filtered = tasks.AsEnumerable();
+        if (isTagSearch)
+        {
+            filtered = filtered.Where(t => MatchesTag(t.Tags, tag!));
+        }
+
+        return Ok(filtered.Select(t => new TaskResponse
         {
             Id = t.Id,
             Title = t.Title,
@@ -123,6 +175,24 @@ public class TasksController : ControllerBase
         await _db.SaveChangesAsync();
 
         return NoContent();
+    }
+
+    private static bool MatchesTag(string? tags, string selectedTag)
+    {
+        if (string.IsNullOrEmpty(tags))
+        {
+            return false;
+        }
+
+        var normalizedSelectedTag = selectedTag.Trim();
+        if (normalizedSelectedTag.Length == 0)
+        {
+            return false;
+        }
+
+        return tags
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(part => string.Equals(part, normalizedSelectedTag, StringComparison.OrdinalIgnoreCase));
     }
 
     private static TaskResponse ToResponse(TodoTask task) => new()

@@ -30,8 +30,33 @@ async function parseErrorDetails(response: Response): Promise<unknown> {
   }
 }
 
-export async function fetchTasks(): Promise<Task[]> {
-  const response = await fetch('/api/tasks');
+export interface FetchTasksParams {
+  includeCompleted?: boolean;
+  sortBy?: 'priority' | 'dueDate';
+  tag?: string | null;
+}
+
+export async function fetchTasks(
+  params?: FetchTasksParams,
+  signal?: AbortSignal,
+): Promise<Task[]> {
+  const searchParams = new URLSearchParams();
+
+  if (params?.includeCompleted) {
+    searchParams.set('includeCompleted', 'true');
+  }
+  if (params?.sortBy) {
+    searchParams.set('sortBy', params.sortBy);
+  }
+  if (params?.tag) {
+    searchParams.set('tag', params.tag);
+  }
+
+  const query = searchParams.toString();
+  const url = query ? `/api/tasks?${query}` : '/api/tasks';
+  const response = signal
+    ? await fetch(url, { signal })
+    : await fetch(url);
   if (!response.ok) {
     throw new TaskApiError(response.status, await parseErrorDetails(response));
   }
