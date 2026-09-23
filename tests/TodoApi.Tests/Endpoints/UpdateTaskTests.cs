@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using TodoApi.Data;
+using TodoApi.Models;
 using Xunit;
 
 namespace TodoApi.Tests.Endpoints;
@@ -64,6 +67,83 @@ public class UpdateTaskTests
 
         Assert.Equal(createdAt, root.GetProperty("createdAt").GetString());
         Assert.NotEqual(originalUpdatedAt, root.GetProperty("updatedAt").GetString());
+    }
+
+    [Fact]
+    public async Task UpdateTask_CompletedStatus_PersistsInSqlite()
+    {
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var id = await CreateTaskAsync(client, new { title = "Persist completion" });
+        var response = await client.PutAsJsonAsync($"/api/tasks/{id}", new
+        {
+            title = "Persist completion", status = "Completed"
+        });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var responseDoc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var updatedAt = responseDoc.RootElement.GetProperty("updatedAt").GetDateTime();
+
+        var options = new DbContextOptionsBuilder<TodoDbContext>()
+            .UseSqlite(factory.ConnectionString)
+            .Options;
+        using var db = new TodoDbContext(options);
+        var task = await db.Tasks.SingleAsync(item => item.Id == id);
+        Assert.Equal(TaskItemStatus.Completed, task.Status);
+        Assert.Equal(updatedAt, task.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task UpdateTask_AllEditedFields_PersistInSqlite()
+    {
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var id = await CreateTaskAsync(client, new { title = "Original", priority = "High" });
+        var response = await client.PutAsJsonAsync($"/api/tasks/{id}", new
+        {
+            title = "Updated", description = "Details", priority = "Low",
+            dueDate = "2026-01-15", tags = "work", status = "Completed"
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var responseDoc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var result = responseDoc.RootElement;
+        var options = new DbContextOptionsBuilder<TodoDbContext>().UseSqlite(factory.ConnectionString).Options;
+        using var db = new TodoDbContext(options);
+        var persisted = await db.Tasks.SingleAsync(item => item.Id == id);
+
+        Assert.Equal("Updated", result.GetProperty("title").GetString());
+        Assert.Equal("Details", result.GetProperty("description").GetString());
+        Assert.Equal("Low", result.GetProperty("priority").GetString());
+        Assert.Equal("2026-01-15", result.GetProperty("dueDate").GetString());
+        Assert.Equal("work", result.GetProperty("tags").GetString());
+        Assert.Equal("Completed", result.GetProperty("status").GetString());
+        Assert.Equal(result.GetProperty("updatedAt").GetDateTime(), persisted.UpdatedAt);
+        Assert.Equal("Updated", persisted.Title);
+        Assert.Equal("Details", persisted.Description);
+        Assert.Equal("Low", persisted.Priority.ToString());
+        Assert.Equal(new DateOnly(2026, 1, 15), persisted.DueDate);
+        Assert.Equal("work", persisted.Tags);
+        Assert.Equal(TaskItemStatus.Completed, persisted.Status);
+    }
+
+    [Fact]
+    public async Task UpdateTask_InvalidData_DoesNotPersistChanges()
+    {
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var id = await CreateTaskAsync(client, new { title = "Original", priority = "High" });
+        var options = new DbContextOptionsBuilder<TodoDbContext>().UseSqlite(factory.ConnectionString).Options;
+        DateTime originalUpdatedAt;
+        using (var beforeDb = new TodoDbContext(options))
+            originalUpdatedAt = (await beforeDb.Tasks.SingleAsync(item => item.Id == id)).UpdatedAt;
+
+        var response = await client.PutAsJsonAsync($"/api/tasks/{id}", new { title = "" });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using var db = new TodoDbContext(options);
+        var persisted = await db.Tasks.SingleAsync(item => item.Id == id);
+        Assert.Equal("Original", persisted.Title);
+        Assert.Equal("High", persisted.Priority.ToString());
+        Assert.Equal(originalUpdatedAt, persisted.UpdatedAt);
     }
 
     [Fact]
