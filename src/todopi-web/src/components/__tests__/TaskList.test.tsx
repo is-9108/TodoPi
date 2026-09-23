@@ -20,8 +20,8 @@ const makeTask = (overrides: Partial<Task> = {}): Task => ({
 
 type RenderProps = Omit<
   ComponentProps<typeof TaskList>,
-  'onShowCompletedChange' | 'onSortByChange' | 'onTagChange'
->;
+  'onShowCompletedChange' | 'onSortByChange' | 'onTagChange' | 'onSelectTask'
+> & Partial<Pick<ComponentProps<typeof TaskList>, 'onSelectTask'>>;
 
 const renderTaskList = (props: RenderProps) =>
   render(
@@ -30,6 +30,7 @@ const renderTaskList = (props: RenderProps) =>
       onShowCompletedChange={vi.fn()}
       onSortByChange={vi.fn()}
       onTagChange={vi.fn()}
+      onSelectTask={props.onSelectTask ?? vi.fn()}
     />,
   );
 
@@ -117,6 +118,24 @@ describe('TaskList', () => {
   it('shows filtered empty message when selected tag has no match', () => {
     renderTaskList({ tasks: [makeTask({ tags: 'home' })], selectedTag: 'work' });
     expect(screen.getByText('該当するタスクがありません')).toBeInTheDocument();
+  });
+
+  it('selects a task by id', async () => {
+    const onSelectTask = vi.fn();
+    const user = (await import('@testing-library/user-event')).default.setup();
+    render(
+      <TaskList
+        tasks={[makeTask({ id: 42, title: '選択するタスク' })]}
+        onSelectTask={onSelectTask}
+        onShowCompletedChange={vi.fn()}
+        onSortByChange={vi.fn()}
+        onTagChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByText('選択するタスク'));
+
+    expect(onSelectTask).toHaveBeenCalledWith(42);
   });
 
   it('renders TaskControls with filter/sort options', () => {

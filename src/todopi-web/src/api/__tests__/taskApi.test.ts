@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createTask, fetchTasks, TaskApiError } from '../taskApi';
-import type { CreateTaskRequest, Task } from '../../types/task';
+import { createTask, fetchTask, fetchTasks, TaskApiError, updateTask } from '../taskApi';
+import { Priority, TaskStatus, type CreateTaskRequest, type Task, type UpdateTaskRequest } from '../../types/task';
 
 const makeTask = (overrides: Partial<Task> = {}): Task => ({
   id: 1,
   title: 'Task 1',
   description: null,
-  priority: 'High',
+  priority: Priority.High,
   dueDate: null,
   tags: null,
-  status: 'Incomplete',
+  status: TaskStatus.Incomplete,
   createdAt: '2025-01-01T00:00:00Z',
   updatedAt: '2025-01-01T00:00:00Z',
   ...overrides,
@@ -78,6 +78,48 @@ describe('fetchTasks', () => {
     expect(error).toBeInstanceOf(TaskApiError);
     expect(error.status).toBe(500);
   });
+
+});
+
+describe('fetchTask', () => {
+  it('fetchTask returns one task and reports 404', async () => {
+    const task = makeTask({ id: 7 });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => task })
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ title: 'Not found' }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchTask(7)).resolves.toEqual(task);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/tasks/7');
+    const error = await fetchTask(7).catch((caught) => caught);
+    expect(error).toBeInstanceOf(TaskApiError);
+    expect(error.status).toBe(404);
+  });
+});
+
+describe('updateTask', () => {
+  it('updateTask sends all editable fields and reports errors', async () => {
+    const request: UpdateTaskRequest = {
+      title: 'Updated', description: 'Details', priority: Priority.Low,
+      dueDate: '2025-04-01', tags: 'work', status: TaskStatus.Completed,
+    };
+    const updated = makeTask({ id: 7, ...request });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => updated })
+      .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ title: 'Invalid task' }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(updateTask(7, request)).resolves.toEqual(updated);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/tasks/7', expect.objectContaining({
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    }));
+    const error = await updateTask(7, request).catch((caught) => caught);
+    expect(error).toBeInstanceOf(TaskApiError);
+    expect(error.status).toBe(400);
+    expect(error.message).toBe('Invalid task');
+  });
 });
 
 describe('createTask', () => {
@@ -85,7 +127,7 @@ describe('createTask', () => {
     const request: CreateTaskRequest = {
       title: 'New task',
       description: 'description',
-      priority: 'High',
+      priority: Priority.High,
       dueDate: '2025-02-01',
       tags: 'work',
     };
@@ -93,7 +135,7 @@ describe('createTask', () => {
       id: 10,
       title: 'New task',
       description: 'description',
-      priority: 'High',
+      priority: Priority.High,
       dueDate: '2025-02-01',
       tags: 'work',
     });

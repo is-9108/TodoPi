@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
@@ -24,9 +24,185 @@ const jsonResponse = (body: unknown, status = 200, ok = true) => ({
   json: async () => body,
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  window.history.pushState({}, '', '/');
+});
 
 describe('App', () => {
+  it('一覧のタスクから対応する詳細へ遷移し、一覧へ戻れる', async () => {
+    const user = userEvent.setup();
+    const task = makeTask({ title: 'Open detail' });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([task]))
+      .mockResolvedValueOnce(jsonResponse(task));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await user.click(await screen.findByText('Open detail'));
+    expect(window.location.pathname).toBe('/tasks/1');
+    expect(await screen.findByText('Open detail')).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === '/api/tasks/1')).toBe(true));
+    await user.click(screen.getByRole('button', { name: /一覧へ戻る/ }));
+    expect(window.location.pathname).toBe('/');
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/tasks').length).toBe(2));
+  });
+
+  it('shows task details directly from the URL', async () => {
+    window.history.pushState({}, '', '/tasks/3');
+    const task = makeTask({ id: 3, title: 'URL detail' });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(task));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    expect(await screen.findByText('URL detail')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/tasks/3')).toBe(true);
+    window.history.pushState({}, '', '/');
+  });
+
+  it('詳細画面を切り替えた場合は古い詳細レスポンスを無視する', async () => {
+    const user = userEvent.setup();
+    const first = makeTask({ id: 1, title: 'First detail' });
+    const second = makeTask({ id: 2, title: 'Second detail' });
+    let resolveFirst!: (value: unknown) => void;
+    let resolveSecond!: (value: unknown) => void;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/tasks/1') {
+        return new Promise((resolve) => { resolveFirst = resolve; });
+      }
+      if (url === '/api/tasks/2') {
+        return new Promise((resolve) => { resolveSecond = resolve; });
+      }
+      return Promise.resolve(jsonResponse([first, second]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await user.click(await screen.findByText('First detail'));
+    await waitFor(() => expect(resolveFirst).toBeDefined());
+    window.history.pushState({}, '', '/tasks/2');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitFor(() => expect(resolveSecond).toBeDefined());
+
+    await act(async () => {
+      resolveSecond(jsonResponse(second));
+    });
+    expect(await screen.findByText('Second detail')).toBeInTheDocument();
+    await act(async () => {
+      resolveFirst(jsonResponse(first));
+    });
+    expect(screen.queryByText('First detail')).not.toBeInTheDocument();
+    window.history.pushState({}, '', '/');
+  });
+
+  it('表示済み詳細から別IDへ切り替えると旧フォームを隠し、旧フォームの保存も拒否する', async () => {
+    const first = makeTask({ id: 1, title: 'First detail' });
+    const second = makeTask({ id: 2, title: 'Second detail' });
+    let resolveSecond!: (value: unknown) => void;
+    const fetchMock = vi.fn((input: RequestInfo | URL, _options?: RequestInit) => {
+      if (String(input) === '/api/tasks/1') return Promise.resolve(jsonResponse(first));
+      if (String(input) === '/api/tasks/2') {
+        return new Promise((resolve) => { resolveSecond = resolve; });
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    window.history.pushState({}, '', '/tasks/1');
+    render(<App />);
+    expect(await screen.findByText('First detail')).toBeInTheDocument();
+    const oldForm = screen.getByLabelText('タイトル').closest('form')!;
+    expect(screen.getByRole('button', { name: '保存' })).toBeInTheDocument();
+
+    window.history.pushState({}, '', '/tasks/2');
+    await act(async () => { fireEvent.submit(oldForm); });
+    expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'PUT')).toBe(false);
+
+    act(() => { window.dispatchEvent(new PopStateEvent('popstate')); });
+    expect(screen.queryByText('First detail')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('タイトル')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'PUT')).toBe(false);
+    await waitFor(() => expect(resolveSecond).toBeDefined());
+    expect(screen.getByRole('status')).toHaveTextContent('読み込み中');
+
+    await act(async () => { resolveSecond(jsonResponse(second)); });
+    expect(await screen.findByText('Second detail')).toBeInTheDocument();
+    expect(screen.getByLabelText('タイトル')).toHaveValue('Second detail');
+  });
+
+  it('不正なIDと不存在タスクのエラーを表示する', async () => {
+    window.history.pushState({}, '', '/tasks/nope');
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ title: 'Not found' }, 404, false));
+    vi.stubGlobal('fetch', fetchMock);
+    let view = render(<App />);
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    view.unmount();
+    window.history.pushState({}, '', '/tasks/2147483648');
+    view = render(<App />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('不正なタスクIDです');
+    expect(fetchMock).not.toHaveBeenCalled();
+    view.unmount();
+    window.history.pushState({}, '', '/tasks/77');
+    render(<App />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Not found');
+    window.history.pushState({}, '', '/');
+  });
+
+  it('詳細取得エラー後に別IDへ移動すると古いエラーをすぐ消す', async () => {
+    let resolveNext!: (value: unknown) => void;
+    const next = makeTask({ id: 78, title: 'Recovered detail' });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input) === '/api/tasks/77') {
+        return Promise.resolve(jsonResponse({ title: 'Not found' }, 404, false));
+      }
+      if (String(input) === '/api/tasks/78') {
+        return new Promise((resolve) => { resolveNext = resolve; });
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    window.history.pushState({}, '', '/tasks/77');
+    render(<App />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Not found');
+
+    window.history.pushState({}, '', '/tasks/78');
+    act(() => { window.dispatchEvent(new PopStateEvent('popstate')); });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await waitFor(() => expect(resolveNext).toBeDefined());
+    await act(async () => { resolveNext(jsonResponse(next)); });
+    expect(await screen.findByText('Recovered detail')).toBeInTheDocument();
+  });
+
+  it('保存後に更新内容と更新日時を表示する', async () => {
+    const user = userEvent.setup();
+    const original = makeTask({ title: 'Before edit' });
+    const updated = makeTask({ title: 'After edit', status: TaskStatus.Completed, updatedAt: '2025-03-03T00:00:00Z' });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([original]))
+      .mockResolvedValueOnce(jsonResponse(original))
+      .mockResolvedValueOnce(jsonResponse(updated))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([updated]));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await user.click(await screen.findByText('Before edit'));
+    await screen.findByLabelText('タイトル');
+    await user.clear(screen.getByLabelText('タイトル'));
+    await user.type(screen.getByLabelText('タイトル'), 'After edit');
+    await user.selectOptions(screen.getByLabelText('状態'), 'Completed');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'PUT' && JSON.parse(String(options.body)).status === 'Completed')).toBe(true));
+    expect(await screen.findByText('After edit')).toBeInTheDocument();
+    expect(await screen.findByText('2025-03-03T00:00:00Z')).toBeInTheDocument();
+    expect(screen.getByLabelText('状態')).toHaveValue('Completed');
+    expect(await screen.findByText('保存しました')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /一覧へ戻る/ }));
+    expect(await screen.findByText('タスクがありません')).toBeInTheDocument();
+    await user.click(screen.getByTestId('show-completed-toggle'));
+    expect(await screen.findByText('After edit')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/tasks?includeCompleted=true')).toBe(true);
+  });
+
   it('fetches tasks on mount', async () => {
     const tasks = [makeTask({ title: '未完了タスク' })];
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(tasks));

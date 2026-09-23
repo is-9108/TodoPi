@@ -1,4 +1,4 @@
-import type { CreateTaskRequest, Task } from '../types/task';
+import type { CreateTaskRequest, Task, UpdateTaskRequest } from '../types/task';
 
 function extractTitle(details: unknown): string | undefined {
   if (typeof details === 'object' && details !== null && 'title' in details) {
@@ -30,6 +30,15 @@ async function parseErrorDetails(response: Response): Promise<unknown> {
   }
 }
 
+async function parseResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    throw new TaskApiError(response.status, await parseErrorDetails(response));
+  }
+  return response.json() as Promise<T>;
+}
+
+const jsonHeaders = { 'Content-Type': 'application/json' } as const;
+
 export interface FetchTasksParams {
   includeCompleted?: boolean;
   sortBy?: 'priority' | 'dueDate';
@@ -54,25 +63,30 @@ export async function fetchTasks(
 
   const query = searchParams.toString();
   const url = query ? `/api/tasks?${query}` : '/api/tasks';
-  const response = signal
-    ? await fetch(url, { signal })
-    : await fetch(url);
-  if (!response.ok) {
-    throw new TaskApiError(response.status, await parseErrorDetails(response));
-  }
-  return response.json();
+  const response = signal ? await fetch(url, { signal }) : await fetch(url);
+  return parseResponse<Task[]>(response);
+}
+
+export async function fetchTask(id: number, signal?: AbortSignal): Promise<Task> {
+  const url = `/api/tasks/${id}`;
+  const response = signal ? await fetch(url, { signal }) : await fetch(url);
+  return parseResponse<Task>(response);
+}
+
+export async function updateTask(id: number, request: UpdateTaskRequest): Promise<Task> {
+  const response = await fetch(`/api/tasks/${id}`, {
+    method: 'PUT',
+    headers: jsonHeaders,
+    body: JSON.stringify(request),
+  });
+  return parseResponse<Task>(response);
 }
 
 export async function createTask(request: CreateTaskRequest): Promise<Task> {
   const response = await fetch('/api/tasks', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: jsonHeaders,
     body: JSON.stringify(request),
   });
-  if (!response.ok) {
-    throw new TaskApiError(response.status, await parseErrorDetails(response));
-  }
-  return response.json();
+  return parseResponse<Task>(response);
 }

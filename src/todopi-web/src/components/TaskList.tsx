@@ -10,6 +10,7 @@ interface TaskListProps {
   onShowCompletedChange: (value: boolean) => void;
   onSortByChange: (value: 'priority' | 'dueDate') => void;
   onTagChange: (value: string) => void;
+  onSelectTask: (id: number) => void;
 }
 
 export default function TaskList({
@@ -20,6 +21,7 @@ export default function TaskList({
   onShowCompletedChange,
   onSortByChange,
   onTagChange,
+  onSelectTask,
 }: TaskListProps) {
   let visibleTasks = showCompleted
     ? tasks
@@ -64,7 +66,7 @@ export default function TaskList({
                   : undefined
               }
             >
-              <span>{task.title}</span>
+              <button type="button" onClick={() => onSelectTask(task.id)}>{task.title}</button>
               <span>{task.priority}</span>
               <span data-testid="task-dueDate">
                 {task.dueDate ?? '期限なし'}
